@@ -50,6 +50,31 @@ currentUser = user;
 currentRole = role;
 }
 
+string base64Decode(const string& input)
+{
+    static const string chars =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    vector<int> T(256, -1);
+    for (int i = 0; i < 64; i++) T[chars[i]] = i;
+
+    string output;
+    int val = 0, valb = -8;
+
+    for (unsigned char c : input)
+    {
+        if (T[c] == -1) break;
+        val = (val << 6) + T[c];
+        valb += 6;
+        if (valb >= 0)
+        {
+            output.push_back(char((val >> valb) & 0xFF));
+            valb -= 8;
+        }
+    }
+    return output;
+}
+
 void ProxyServer::handleClient(int client_socket)
 {
 vector<char> buffer(BUFFER_SIZE);
@@ -66,12 +91,39 @@ if (request.find("CONNECT") != 0)
 cout << "\nREQUEST RECEIVED:\n" << request << endl;
 }
 // AUTHENTICATION
-string username = currentUser;
-string role = currentRole;
+string username = "";
+string role = "";
+
+size_t authPos = request.find("Proxy-Authorization: Basic ");
+
+if (authPos != string::npos)
+{
+    size_t start = authPos + 29;
+    size_t end = request.find("\r\n", start);
+
+    string encoded = request.substr(start, end - start);
+    string decoded = base64Decode(encoded);
+
+    size_t colon = decoded.find(':');
+
+    if (colon != string::npos)
+    {
+        string user = decoded.substr(0, colon);
+        string pass = decoded.substr(colon + 1);
+
+        role = auth.login(user, pass);
+        username = user;
+    }
+}
 if (role == "")
 {
-cout << "Authentication failed\n";
-return;
+    string response =
+    "HTTP/1.1 407 Proxy Authentication Required\r\n"
+    "Proxy-Authenticate: Basic realm=\"Proxy\"\r\n\r\n";
+
+    send(client_socket, response.c_str(), response.length(), 0);
+    cout << "Authentication failed\n";
+    return;
 }
 cout << "Authentication successful (" << role << ")\n";
 //=========================================================
