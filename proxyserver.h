@@ -3,7 +3,13 @@
 #include "Authenticator.h"
 #include "WebsiteFilter.h"
 #include "Logger.h"
+
 #include <string>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <semaphore.h>
+
 class ProxyServer
 {
 private:
@@ -14,6 +20,10 @@ WebsiteFilter filter;
 Logger logger;
 std::string currentUser;
 std::string currentRole;
+    std::queue<int> clientQueue;
+    std::mutex queueMutex;
+    std::condition_variable cv;
+    sem_t clientSlots;
 public:
 ProxyServer(int port);
 void setUser(const std::string& user, const std::string&
@@ -21,5 +31,6 @@ role);
 void startServer();
 void handleClient(int client_socket);
 std::string extractHost(const std::string& request);
+void workerThread();
 };
 #endif

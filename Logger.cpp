@@ -7,6 +7,7 @@ const string& host,
 const string& type,
 const string& status)
 {
+    std::lock_guard<std::mutex> lock(logMutex);
 ofstream file("proxy.log", ios::app);
 time_t now = time(0);
 tm* local = localtime(&now);

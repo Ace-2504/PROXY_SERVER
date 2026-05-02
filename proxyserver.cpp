@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <thread>
 #include <algorithm>
 #include <unistd.h>
 #include <netinet/in.h>
@@ -21,6 +22,7 @@ ProxyServer::ProxyServer(int port)
 this->port = port;
 auth.loadUsers("users.txt");
 filter.loadSites("blocked_sites.txt");
+    sem_init(&clientSlots, 0, 5);
 }
 string ProxyServer::extractHost(const string& request)
 {
@@ -54,6 +56,9 @@ vector<char> buffer(BUFFER_SIZE);
 int bytes = recv(client_socket, buffer.data(),
 BUFFER_SIZE, 0);
 if (bytes <= 0) return;
+cout << "START handling on thread: " << this_thread::get_id() << endl;
+sleep(3); 
+cout << "END handling on thread: " << this_thread::get_id() << endl;
 string request(buffer.data(), bytes);
 if (request.find("CONNECT") != 0)
 {
@@ -232,40 +237,77 @@ send(client_socket, buffer.data(), bytes, 0);
 cout << "Response sent back to browser\n";
 close(remote_socket);
 }
+
+void ProxyServer::workerThread()
+{
+    while (true)
+    {
+        int client_socket;
+
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+
+            cv.wait(lock, [this] {
+                return !clientQueue.empty();
+            });
+
+            client_socket = clientQueue.front();
+            clientQueue.pop();
+        } 
+
+        sem_wait(&clientSlots);
+        handleClient(client_socket);
+        close(client_socket);
+        sem_post(&clientSlots); 
+    }
+}
+
 void ProxyServer::startServer()
 {
-struct sockaddr_in address;
-server_fd = socket(AF_INET, SOCK_STREAM, 0);
-if(server_fd < 0) {
-cout << "Socket creation failed\n";
-return;
-}
-address.sin_family = AF_INET;
-address.sin_port = htons(port);
-address.sin_addr.s_addr = INADDR_ANY;
-if(::bind(server_fd,(sockaddr*)&address, sizeof(address))
-< 0){
-cout << "Bind failed\n";
-return;
-}
-listen(server_fd, 6);
-cout << "Proxy server running on port " << port << endl;
-while(true)
-{
-int client_socket = accept(server_fd, NULL, NULL);
-if(client_socket < 0) continue;
-pid_t pid = fork();
-if(pid == 0)
-{
-close(server_fd);
-handleClient(client_socket);
-close(client_socket);
-exit(0);
-}
-else
-{
-close(client_socket);
-}
-}
-close(server_fd);
+    struct sockaddr_in address;
+
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0)
+    {
+        cout << "Socket creation failed\n";
+        return;
+    }
+
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    address.sin_addr.s_addr = INADDR_ANY;
+
+    if (::bind(server_fd, (sockaddr*)&address, sizeof(address)) < 0)
+    {
+        cout << "Bind failed\n";
+        return;
+    }
+
+    listen(server_fd, 6);
+
+    cout << "Proxy server running on port " << port << endl;
+
+    const int THREAD_COUNT = 5;
+    vector<thread> workers;
+
+    for (int i = 0; i < THREAD_COUNT; i++)
+    {
+        workers.emplace_back(&ProxyServer::workerThread, this);
+    }
+
+    while (true)
+    {
+        int client_socket = accept(server_fd, NULL, NULL);
+        if (client_socket < 0)
+            continue;
+
+        {
+            unique_lock<mutex> lock(queueMutex);
+            clientQueue.push(client_socket);
+        }
+
+        cv.notify_one();
+    }
+
+    close(server_fd);
 }
