@@ -49,6 +49,7 @@ string& role)
 currentUser = user;
 currentRole = role;
 }
+
 void ProxyServer::handleClient(int client_socket)
 {
 vector<char> buffer(BUFFER_SIZE);
@@ -161,6 +162,42 @@ return;
 //=========================================================
 string host = extractHost(request);
 cout << "HTTP HOST: " << host << endl;
+
+string cacheKey;
+
+size_t getPos = request.find("GET ");
+size_t httpPos = request.find(" HTTP/");
+
+if (getPos != string::npos && httpPos != string::npos)
+{
+string url = request.substr(getPos + 4, httpPos - (getPos + 4));
+
+if (url.find("http://") == 0)
+url = url.substr(7);
+
+size_t slashPos = url.find('/');
+string path = "/";
+
+if (slashPos != string::npos)
+path = url.substr(slashPos);
+
+cacheKey = host + path;
+}
+else
+{
+cacheKey = host;
+}
+
+bool isGet = (request.find("GET ") == 0);
+string cachedResponse;
+if (isGet && cache.get(cacheKey, cachedResponse))
+{
+cout << "CACHE HIT\n";
+send(client_socket, cachedResponse.c_str(), cachedResponse.size(), 0);
+return;
+}
+
+
 // FILTER
 if (role != "admin" && !filter.isAllowed(host))
 {
@@ -227,14 +264,24 @@ timeout.tv_usec = 0;
 setsockopt(remote_socket, SOL_SOCKET, SO_RCVTIMEO,
 &timeout, sizeof(timeout));
 // FORWARD RESPONSE
+string fullResponse;
+
 while (true)
 {
-bytes = recv(remote_socket, buffer.data(), BUFFER_SIZE,
-0);
+bytes = recv(remote_socket, buffer.data(), BUFFER_SIZE, 0);
 if (bytes <= 0) break;
+
+fullResponse.append(buffer.data(), bytes);
 send(client_socket, buffer.data(), bytes, 0);
 }
 cout << "Response sent back to browser\n";
+
+if (!cacheKey.empty() && isGet && fullResponse.size() < 100000)
+{
+cache.put(cacheKey, fullResponse);
+cout << "CACHE STORED\n";
+}
+
 close(remote_socket);
 }
 

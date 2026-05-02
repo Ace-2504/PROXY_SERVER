@@ -3,6 +3,7 @@
 #include "Authenticator.h"
 #include "WebsiteFilter.h"
 #include "Logger.h"
+#include "LRUCache.h"
 
 #include <string>
 #include <queue>
@@ -24,6 +25,7 @@ std::string currentRole;
     std::mutex queueMutex;
     std::condition_variable cv;
     sem_t clientSlots;
+    LRUCache cache{5}; 
 public:
 ProxyServer(int port);
 void setUser(const std::string& user, const std::string&

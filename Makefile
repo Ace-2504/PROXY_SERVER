@@ -1,5 +1,5 @@
-proxy: main.cpp proxyServer.cpp Authenticator.cpp WebsiteFilter.cpp Logger.cpp
-	g++ main.cpp ProxyServer.cpp Authenticator.cpp WebsiteFilter.cpp Logger.cpp -o proxy
+proxy: main.cpp proxyServer.cpp Authenticator.cpp WebsiteFilter.cpp Logger.cpp LRUCache.cpp
+	g++ main.cpp ProxyServer.cpp Authenticator.cpp WebsiteFilter.cpp Logger.cpp LRUCache.cpp -o proxy
 run: proxy
 	./proxy
 
