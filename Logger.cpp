@@ -2,21 +2,28 @@
 #include <fstream>
 #include <ctime>
 using namespace std;
-void Logger::log(const string& user,
-const string& host,
-const string& type,
-const string& status)
+
+Logger::Logger()
+{
+    logFile.open("proxy.log", std::ios::app);
+}
+
+void Logger::log(const std::string& user,
+                 const std::string& host,
+                 const std::string& type,
+                 const std::string& status)
 {
     std::lock_guard<std::mutex> lock(logMutex);
-ofstream file("proxy.log", ios::app);
-time_t now = time(0);
-tm* local = localtime(&now);
-char timeStr[10];
-strftime(timeStr, sizeof(timeStr), "%H:%M:%S", local);
-file << "[" << timeStr << "] "
-<< user << " | "
-<< host << " | "
-<< type << " | "
-<< status << endl;
-file.close();
+
+    if (logFile.is_open())
+    {
+        logFile << user << " | " << host << " | " << type << " | " << status << std::endl;
+        logFile.flush();
+    }
+}
+
+Logger::~Logger()
+{
+    if (logFile.is_open())
+        logFile.close();
 }

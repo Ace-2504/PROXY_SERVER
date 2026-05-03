@@ -15,14 +15,14 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <cstring>
-#define BUFFER_SIZE 8192
+#define BUFFER_SIZE 65536
 using namespace std;
 ProxyServer::ProxyServer(int port)
 {
 this->port = port;
 auth.loadUsers("users.txt");
 filter.loadSites("blocked_sites.txt");
-    sem_init(&clientSlots, 0, 5);
+    sem_init(&clientSlots, 0, 20);
 }
 string ProxyServer::extractHost(const string& request)
 {
@@ -83,26 +83,39 @@ int bytes = recv(client_socket, buffer.data(),
 BUFFER_SIZE, 0);
 if (bytes <= 0) return;
 cout << "START handling on thread: " << this_thread::get_id() << endl;
-sleep(3); 
 cout << "END handling on thread: " << this_thread::get_id() << endl;
 string request(buffer.data(), bytes);
 if (request.find("CONNECT") != 0)
 {
-cout << "\nREQUEST RECEIVED:\n" << request << endl;
+cout << "\nREQUEST RECEIVED:\n" << endl;
 }
 // AUTHENTICATION
 string username = "";
 string role = "";
 
-size_t authPos = request.find("Proxy-Authorization: Basic ");
+{
+    std::lock_guard<std::mutex> lock(authMutex);
+    if (authCache.find(client_socket) != authCache.end())
+    {
+        role = authCache[client_socket];
+        username = "cached_user";
+    }
+}
+if (role == "") {
+    size_t authPos = request.find("Proxy-Authorization: Basic ");
 
 if (authPos != string::npos)
 {
-    size_t start = authPos + 29;
+    size_t start = request.find("Basic ") + 6;
     size_t end = request.find("\r\n", start);
 
     string encoded = request.substr(start, end - start);
+    encoded.erase(encoded.find_last_not_of(" \r\n\t") + 1);
+    encoded.erase(0, encoded.find_first_not_of(" \r\n\t"));    
+    
     string decoded = base64Decode(encoded);
+    decoded.erase(decoded.find_last_not_of(" \r\n\t") + 1);
+    decoded.erase(0, decoded.find_first_not_of(" \r\n\t"));
 
     size_t colon = decoded.find(':');
 
@@ -114,6 +127,12 @@ if (authPos != string::npos)
         role = auth.login(user, pass);
         username = user;
     }
+    if (role != "")
+    {
+        std::lock_guard<std::mutex> lock(authMutex);
+        authCache[client_socket] = role;
+    }
+}
 }
 if (role == "")
 {
@@ -123,6 +142,7 @@ if (role == "")
 
     send(client_socket, response.c_str(), response.length(), 0);
     cout << "Authentication failed\n";
+    close(client_socket);
     return;
 }
 cout << "Authentication successful (" << role << ")\n";
@@ -138,11 +158,18 @@ if (role != "admin" && !filter.isAllowed(host))
 {
 cout << "Blocked HTTPS site: " << host << endl;
 string response =
-"HTTP/1.1 403 Forbidden\r\n\r\nBlocked by proxy";
+"HTTP/1.1 403 Forbidden\r\n"
+"Content-Type: text/plain\r\n"
+"Content-Length: 18\r\n"
+"Connection: close\r\n"
+"\r\n"
+"Blocked by proxy";
 send(client_socket, response.c_str(), response.length(),
 0);
+close(client_socket);
 logger.log(username + "(" + role + ")", host, "HTTPS",
 "BLOCKED");
+close(client_socket);
 return;
 }
 logger.log(username + "(" + role + ")", host, "HTTPS",
@@ -260,6 +287,7 @@ send(client_socket, response.c_str(), response.length(),
 0);
 logger.log(username + "(" + role + ")", host, "HTTP",
 "BLOCKED");
+close(client_socket);
 return;
 }
 logger.log(username + "(" + role + ")", host, "HTTP",
@@ -311,7 +339,7 @@ send(remote_socket, modifiedRequest.c_str(),
 modifiedRequest.length(), 0);
 // TIMEOUT
 struct timeval timeout;
-timeout.tv_sec = 3;
+timeout.tv_sec = 1;
 timeout.tv_usec = 0;
 setsockopt(remote_socket, SOL_SOCKET, SO_RCVTIMEO,
 &timeout, sizeof(timeout));
@@ -386,7 +414,7 @@ void ProxyServer::startServer()
 
     cout << "Proxy server running on port " << port << endl;
 
-    const int THREAD_COUNT = 5;
+    const int THREAD_COUNT = 20;
     vector<thread> workers;
 
     for (int i = 0; i < THREAD_COUNT; i++)

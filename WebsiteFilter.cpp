@@ -18,11 +18,9 @@ bool WebsiteFilter::isAllowed(const string& domain)
 {
     for (const auto& site : blockedSites)
     {
-        // Case 1: domain name exact match
         if (domain == site)
             return false;
 
-        // Case 2: subdomain match (e.g., www.facebook.com)
         if (domain.size() > site.size())
         {
             size_t pos = domain.size() - site.size();
